@@ -1,1 +1,5 @@
-demo-lab02.mov
+/demo-lab02.mov
+/.DS_Store
+/backend/.env
+/backend/node_modules/
+/frontend/lab02-fe/node_modules/
