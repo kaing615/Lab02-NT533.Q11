@@ -182,20 +182,34 @@ export async function createSubnetService(req, res) {
 
 export async function createPortService(req, res) {
   const {
+    sg_names,
     network_id,
     fixed_ips,
     subnet_id,
     ip_address,
     port_security_enabled = false,
-    security_groups = null,
     admin_state_up = true,
   } = req.body;
 
   await ensureToken();
 
+  const namesArr = Array.isArray(sg_names)
+    ? sg_names
+    : sg_names
+    ? [sg_names]
+    : [];
+
   if (!cachedToken || !cachedCatalog) {
     throw new Error("Not signed in. Please call /signin first.");
   }
+
+  const ids = namesArr.length
+    ? await getSecurityGroupIdsByNames(namesArr) // bạn phải có hàm này
+    : undefined;
+
+  const security_groups =
+    port_security_enabled && Array.isArray(ids) && ids.length ? ids : undefined;
+
   if (!network_id) throw new Error("Network ID is required");
 
   let fixedIpsPayload = [];
@@ -238,6 +252,35 @@ export async function createPortService(req, res) {
 
   const resp = await neutron.post("/ports", body);
   return resp.data;
+}
+
+export async function createPortWithSGNames(req, res) {
+  const {
+    sg_names = [], // ví dụ: ["default", "web-servers"]
+    network_id,
+    subnet_id,
+    ip_address,
+    port_security_enabled = true,
+    admin_state_up = true,
+  } = req.body || {};
+
+  const security_groups = sg_names.length
+    ? await getSecurityGroupIdsByNames(sg_names)
+    : undefined;
+
+  return createPortService(
+    {
+      body: {
+        network_id,
+        subnet_id,
+        ip_address,
+        port_security_enabled,
+        admin_state_up,
+        security_groups,
+      },
+    },
+    res
+  );
 }
 
 export async function createNetSubnetPortService(req, res) {
@@ -367,6 +410,39 @@ export async function listSecurityGroupsService(req, res) {
 
   const resp = await neutron.get("/security-groups");
   return resp.data;
+}
+
+export async function getSecurityGroupIdsByNames(names = []) {
+  if (!Array.isArray(names) || names.length === 0) {
+    throw new Error("Security group names array is required");
+  }
+
+  await ensureToken();
+  if (!cachedToken || !cachedCatalog) {
+    throw new Error("Not signed in. Please call /signin first.");
+  }
+
+  const neutron = axios.create({
+    baseURL: "https://cloud-network.uitiot.vn/v2.0",
+    headers: { Accept: "application/json", "X-Auth-Token": cachedToken },
+    timeout: 15000,
+  });
+
+  const resp = await neutron.get("/security-groups");
+  const all = resp.data?.security_groups || [];
+
+  const byName = new Map(all.map((sg) => [sg.name, sg.id]));
+
+  const uuidRe = /^[0-9a-fA-F-]{36}$/;
+
+  const ids = names.map((n) => {
+    if (uuidRe.test(n)) return n; // đã là UUID
+    const id = byName.get(n);
+    if (!id) throw new Error(`Security group not found: ${n}`);
+    return id;
+  });
+
+  return Array.from(new Set(ids));
 }
 
 export async function listKeyPairs(req, res) {
